@@ -276,7 +276,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				QUIET_TASKS_TEAM = "";
-                QUIET_TASKS_APP_BUNDLE_ID = com.example.quiettasks;
+                QUIET_TASKS_APP_BUNDLE_ID = com.personal.quiettasks;
                 QUIET_TASKS_WIDGET_BUNDLE_ID = "$(QUIET_TASKS_APP_BUNDLE_ID).widget";
                 QUIET_TASKS_APP_GROUP = "group.$(QUIET_TASKS_APP_BUNDLE_ID)";
                 ALWAYS_SEARCH_USER_PATHS = NO;
@@ -341,7 +341,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				QUIET_TASKS_TEAM = "";
-                QUIET_TASKS_APP_BUNDLE_ID = com.example.quiettasks;
+                QUIET_TASKS_APP_BUNDLE_ID = com.personal.quiettasks;
                 QUIET_TASKS_WIDGET_BUNDLE_ID = "$(QUIET_TASKS_APP_BUNDLE_ID).widget";
                 QUIET_TASKS_APP_GROUP = "group.$(QUIET_TASKS_APP_BUNDLE_ID)";
                 ALWAYS_SEARCH_USER_PATHS = NO;

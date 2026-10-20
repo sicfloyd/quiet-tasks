@@ -11,12 +11,15 @@ on:
       app_bundle_id:
         description: Your app bundle identifier
         required: true
+        default: com.personal.quiettasks
       widget_bundle_id:
         description: Your widget bundle identifier (app ID plus a suffix)
         required: true
+        default: com.personal.quiettasks.widget
       app_group_id:
         description: Your provisioned App Group identifier
         required: true
+        default: group.com.personal.quiettasks
 permissions:
   contents: read
 jobs:

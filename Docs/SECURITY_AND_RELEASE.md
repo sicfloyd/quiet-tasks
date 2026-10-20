@@ -25,15 +25,17 @@ Keychain behavior in the signed app, widget registration, or end-user installabi
 
 ## Signing parameters
 
-Supply these build settings together; example defaults are deliberately unsuitable
-for distribution and the upstream developer's signing team is never required:
+The user supplied these identifier defaults on 2026-10-21. The Apple Developer
+Team ID is not available yet and remains empty. These identifiers have not been
+registered or provisioned by this task; they do not establish signing entitlement.
+CI can override all values, and the upstream developer's team is never required:
 
 | Setting | Value |
 | --- | --- |
-| `QUIET_TASKS_TEAM` | Your Apple Developer Team ID |
-| `QUIET_TASKS_APP_BUNDLE_ID` | Your unique app identifier |
-| `QUIET_TASKS_WIDGET_BUNDLE_ID` | App identifier plus your widget suffix |
-| `QUIET_TASKS_APP_GROUP` | One exact App Group supported by your profiles for both targets |
+| `QUIET_TASKS_TEAM` | Empty until your Apple Developer Team ID is available |
+| `QUIET_TASKS_APP_BUNDLE_ID` | `com.personal.quiettasks` |
+| `QUIET_TASKS_WIDGET_BUNDLE_ID` | `com.personal.quiettasks.widget` (derived from app ID by default) |
+| `QUIET_TASKS_APP_GROUP` | `group.com.personal.quiettasks` (derived from app ID by default) |
 | `QUIET_TASKS_APP_PROFILE` / `QUIET_TASKS_WIDGET_PROFILE` | Separate matching distribution profile UUIDs for manual signing |
 
 Both Info.plists carry the configured group, both entitlement files expand that
