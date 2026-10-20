@@ -1,0 +1,64 @@
+name: macOS test build
+on:
+  push:
+    branches: [main, security/harden-google-tasks]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-test-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test-build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Security and sync tests (synthetic credentials; no Google account)
+        run: swift test --jobs 2
+      - name: Build app and embedded widget (unsigned, test only)
+        run: |
+          set -euo pipefail
+          xcodebuild -project QuietTasks.xcodeproj -scheme 'Quiet Tasks' \
+            -configuration Release -derivedDataPath XcodeDerivedData \
+            -destination 'generic/platform=macOS' -jobs 2 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            QUIET_TASKS_TEAM='' build
+          app='XcodeDerivedData/Build/Products/Release/Quiet Tasks.app'
+          test -x "$app/Contents/MacOS/Quiet Tasks"
+          test -x "$app/Contents/PlugIns/QuietTasksWidgetExtension.appex/Contents/MacOS/QuietTasksWidgetExtension"
+          plutil -lint "$app/Contents/Info.plist"
+          plutil -lint "$app/Contents/PlugIns/QuietTasksWidgetExtension.appex/Contents/Info.plist"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$app" dist/Quiet-Tasks-UNSIGNED-TEST-ONLY.zip
+          unzip -l dist/Quiet-Tasks-UNSIGNED-TEST-ONLY.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Quiet-Tasks-UNSIGNED-TEST-ONLY
+          path: dist/Quiet-Tasks-UNSIGNED-TEST-ONLY.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Ad-hoc personal-test signing and runtime experiment
+        run: bash Scripts/build-adhoc-test.sh 'XcodeDerivedData/Build/Products/Release/Quiet Tasks.app'
+      - name: Upload ad-hoc diagnostics (including failures)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Quiet-Tasks-ADHOC-DIAGNOSTICS
+          path: dist/adhoc-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload ad-hoc personal-test app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Quiet-Tasks-ADHOC-PERSONAL-TEST
+          path: dist/Quiet-Tasks-ADHOC-PERSONAL-TEST.zip
+          if-no-files-found: error
+          retention-days: 7

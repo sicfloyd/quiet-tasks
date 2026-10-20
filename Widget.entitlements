@@ -6,7 +6,7 @@
 	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.ai.aifund.quiettasks</string>
+		<string>$(QUIET_TASKS_APP_GROUP)</string>
 	</array>
 </dict>
 </plist>

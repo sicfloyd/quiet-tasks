@@ -1,5 +1,4 @@
 import AppKit
-import AuthenticationServices
 import CryptoKit
 import Darwin
 import Foundation
@@ -197,7 +196,9 @@ enum AppearanceMode: String, CaseIterable, Codable, Identifiable {
 }
 
 struct GoogleSyncSettings: Codable, Equatable {
-    static let defaultClientID = "820308341063-g3mm94f5jmt5vnepdd0qk329650k8612.apps.googleusercontent.com"
+    static let defaultClientID = ""
+    // Optional keeps old settings decodable; changing mode requires disconnect/reconnect.
+    var readOnly: Bool? = false
 
     var clientID: String
     var isConnected: Bool
@@ -215,9 +216,7 @@ struct GoogleSyncSettings: Codable, Equatable {
 
     var effectiveClientID: String {
         let trimmed = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == Self.defaultClientID {
-            return GoogleOAuthLocalConfig.clientID ?? Self.defaultClientID
-        }
+
         return trimmed
     }
 }
@@ -234,220 +233,17 @@ struct AppSettings: Codable, Equatable {
     )
 }
 
-enum SharedFiles {
-    static let appGroupIdentifiers = [
-        "group.ai.aifund.quiettasks",
-        "group.com.rakeshutekar.quiettasksnative"
-    ]
-
-    static var directory: URL {
-        if let appGroupDirectory = appGroupDirectories.first {
-            return appGroupDirectory
-        }
-
-        if FileManager.default.fileExists(atPath: legacySharedDirectory.path) {
-            return legacySharedDirectory
-        }
-
-        try? FileManager.default.createDirectory(at: appSupportDirectory, withIntermediateDirectories: true)
-        return appSupportDirectory
-    }
-
-    static var candidateDirectories: [URL] {
-        unique(appGroupDirectories + [
-            legacySharedDirectory,
-            appSupportDirectory,
-            realHomeDirectory.appendingPathComponent("Library/Application Support/QuietTasks", isDirectory: true)
-        ] + directGroupDirectories)
-    }
-
-    static var legacySharedDirectory: URL {
-        URL(fileURLWithPath: "/Users/Shared/QuietTasks", isDirectory: true)
-    }
-
-    private static var appSupportDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/QuietTasks", isDirectory: true)
-    }
-
-    private static var realHomeDirectory: URL {
-        let username = NSUserName()
-        return URL(fileURLWithPath: NSHomeDirectoryForUser(username) ?? "/Users/\(username)", isDirectory: true)
-    }
-
-    private static var appGroupDirectories: [URL] {
-        appGroupIdentifiers.compactMap { identifier in
-            FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: identifier)?
-                .appendingPathComponent("QuietTasks", isDirectory: true)
-        }
-    }
-
-    private static var directGroupDirectories: [URL] {
-        appGroupIdentifiers.map { identifier in
-            realHomeDirectory
-                .appendingPathComponent("Library/Group Containers/\(identifier)/QuietTasks", isDirectory: true)
-        }
-    }
-
-    private static func unique(_ urls: [URL]) -> [URL] {
-        var seen = Set<String>()
-        return urls.filter { url in
-            let path = url.standardizedFileURL.path
-            return seen.insert(path).inserted
-        }
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
-    }
-}
-
-enum GoogleOAuthLocalConfig {
-    private struct Root: Decodable {
-        var installed: Installed?
-    }
-
-    private struct Installed: Decodable {
-        var clientID: String
-        var clientSecret: String?
-
-        enum CodingKeys: String, CodingKey {
-            case clientID = "client_id"
-            case clientSecret = "client_secret"
-        }
-    }
-
-    static var fileURL: URL {
-        SharedFiles.directory.appendingPathComponent("google-oauth.json")
-    }
-
-    static var clientID: String? {
-        installed?.clientID.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-    }
-
-    static func clientSecret(for clientID: String) -> String? {
-        guard let installed,
-              installed.clientID == clientID
-        else {
-            return nil
-        }
-        return installed.clientSecret?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-    }
-
-    private static var installed: Installed? {
-        let urls = SharedFiles.candidateDirectories.map {
-            $0.appendingPathComponent("google-oauth.json")
-        }
-
-        guard let data = urls.compactMap({ try? Data(contentsOf: $0) }).first,
-              let root = try? JSONDecoder().decode(Root.self, from: data)
-        else {
-            return nil
-        }
-        return root.installed
-    }
-}
-
 enum TaskStore {
-    static var fileURL: URL {
-        SharedFiles.directory.appendingPathComponent("tasks.json")
-    }
-
-    private struct StoredTasks {
-        var url: URL
-        var tasks: [TaskItem]
-        var modifiedAt: Date
-    }
-
-    private static var fileURLs: [URL] {
-        SharedFiles.candidateDirectories.map {
-            $0.appendingPathComponent("tasks.json")
-        }
-    }
-
     static func load() -> [TaskItem] {
-        let storedTasks = fileURLs.compactMap(readStoredTasks)
-        if let primaryStore = storedTasks.first(where: { $0.url.standardizedFileURL == fileURL.standardizedFileURL }) {
-            if !primaryStore.tasks.isEmpty {
-                let tasks = normalized(mergedTasks(base: primaryStore, stores: storedTasks))
-                write(tasks, reloadWidgets: false)
-                return tasks
-            }
-
-            let freshestNonEmptyStore = storedTasks
-                .filter { !$0.tasks.isEmpty }
-                .max(by: { $0.modifiedAt < $1.modifiedAt })
-            if freshestNonEmptyStore == nil || primaryStore.modifiedAt >= (freshestNonEmptyStore?.modifiedAt ?? .distantPast) {
-                write([], reloadWidgets: false)
-                return []
-            }
-        }
-
-        guard let freshestStore = storedTasks
-            .filter({ !$0.tasks.isEmpty })
-            .max(by: { $0.modifiedAt < $1.modifiedAt })
-        else {
-            return normalized(storedTasks.first?.tasks ?? [])
-        }
-
-        let tasks = normalized(freshestStore.tasks)
-        write(tasks, reloadWidgets: false)
-        return tasks
+        guard let data = SharedFiles.read("tasks.json") else { return [] }
+        do { return normalized(try JSONDecoder.taskDecoder.decode([TaskItem].self, from: data)) }
+        catch { SharedFiles.lastError = StorageError.invalidData.localizedDescription; return [] }
     }
 
     static func save(_ tasks: [TaskItem]) {
-        write(normalized(tasks), reloadWidgets: true)
-    }
-
-    private static func write(_ tasks: [TaskItem], reloadWidgets: Bool) {
-        guard let data = try? JSONEncoder.taskEncoder.encode(tasks) else { return }
-        for directory in SharedFiles.candidateDirectories {
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try? data.write(to: directory.appendingPathComponent("tasks.json"), options: .atomic)
-        }
-        if reloadWidgets {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
-    }
-
-    private static func readStoredTasks(_ url: URL) -> StoredTasks? {
-        guard let tasks = decode(url) else { return nil }
-        return StoredTasks(url: url, tasks: tasks, modifiedAt: modifiedAt(url))
-    }
-
-    private static func mergedTasks(base: StoredTasks, stores: [StoredTasks]) -> [TaskItem] {
-        var tasksByID = Dictionary(uniqueKeysWithValues: base.tasks.map { ($0.id, $0) })
-
-        for store in stores where store.url.standardizedFileURL != base.url.standardizedFileURL {
-            for task in store.tasks {
-                if let currentTask = tasksByID[task.id] {
-                    if task.localRevisionDate > currentTask.localRevisionDate {
-                        tasksByID[task.id] = task
-                    }
-                } else if task.localRevisionDate >= base.modifiedAt || task.createdAt >= base.modifiedAt {
-                    tasksByID[task.id] = task
-                }
-            }
-        }
-
-        return Array(tasksByID.values)
-    }
-
-    private static func modifiedAt(_ url: URL) -> Date {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let modifiedAt = attributes[.modificationDate] as? Date
-        else {
-            return .distantPast
-        }
-        return modifiedAt
-    }
-
-    private static func decode(_ url: URL) -> [TaskItem]? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder.taskDecoder.decode([TaskItem].self, from: data)
+        guard SharedFiles.lastError == nil,
+              let data = try? JSONEncoder.taskEncoder.encode(normalized(tasks)) else { return }
+        if SharedFiles.write(data, name: "tasks.json") { WidgetCenter.shared.reloadAllTimelines() }
     }
 
     static func normalized(_ tasks: [TaskItem]) -> [TaskItem] {
@@ -471,81 +267,27 @@ enum TaskStore {
 }
 
 enum SettingsStore {
-    static var fileURL: URL {
-        SharedFiles.directory.appendingPathComponent("settings.json")
-    }
-
-    private struct StoredSettings {
-        var url: URL
-        var settings: AppSettings
-        var modifiedAt: Date
-    }
-
-    private static var fileURLs: [URL] {
-        SharedFiles.candidateDirectories.map {
-            $0.appendingPathComponent("settings.json")
-        }
-    }
-
     static func load() -> AppSettings {
-        let storedSettings = fileURLs.compactMap(readStoredSettings)
-        guard let freshestStore = storedSettings.max(by: { $0.modifiedAt < $1.modifiedAt }) else {
-            return .default
-        }
-
-        let settings = normalized(freshestStore.settings)
-        write(settings, reloadWidgets: false)
-        return settings
+        guard let data = SharedFiles.read("settings.json") else { return .default }
+        do { return normalized(try JSONDecoder.taskDecoder.decode(AppSettings.self, from: data)) }
+        catch { SharedFiles.lastError = StorageError.invalidData.localizedDescription; return .default }
     }
 
     static func save(_ settings: AppSettings) {
-        write(normalized(settings), reloadWidgets: true)
+        guard SharedFiles.lastError == nil,
+              let data = try? JSONEncoder.taskEncoder.encode(normalized(settings)) else { return }
+        if SharedFiles.write(data, name: "settings.json") { WidgetCenter.shared.reloadAllTimelines() }
     }
 
-    private static func write(_ settings: AppSettings, reloadWidgets: Bool) {
-        guard let data = try? JSONEncoder.taskEncoder.encode(settings) else { return }
-        for directory in SharedFiles.candidateDirectories {
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try? data.write(to: directory.appendingPathComponent("settings.json"), options: .atomic)
-        }
-        if reloadWidgets {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
-    }
-
-    private static func readStoredSettings(_ url: URL) -> StoredSettings? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-
-        if let settings = try? JSONDecoder.taskDecoder.decode(AppSettings.self, from: data) {
-            return StoredSettings(url: url, settings: normalized(settings), modifiedAt: modifiedAt(url))
-        }
-
-        if let legacyNotifications = try? JSONDecoder.taskDecoder.decode(NotificationSettings.self, from: data) {
-            var settings = AppSettings.default
-            settings.notifications = legacyNotifications
-            return StoredSettings(url: url, settings: normalized(settings), modifiedAt: modifiedAt(url))
-        }
-
-        return nil
-    }
-
-    private static func modifiedAt(_ url: URL) -> Date {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let modifiedAt = attributes[.modificationDate] as? Date
-        else {
-            return .distantPast
-        }
-        return modifiedAt
-    }
-
-    private static func normalized(_ settings: AppSettings) -> AppSettings {
+    static func normalized(_ settings: AppSettings) -> AppSettings {
         var normalized = settings
         if normalized.notifications.enabled && normalized.notifications.reminderOffsets.isEmpty {
             normalized.notifications.reminderOffsets = [.oneHour]
         }
         normalized.googleSync.clientID = normalized.googleSync.clientID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalized.googleSync.clientID.isEmpty {
-            normalized.googleSync.clientID = GoogleSyncSettings.defaultClientID
+        // Drop the upstream public OAuth ID when reading legacy settings.
+        if normalized.googleSync.clientID.hasPrefix("820308341063-") {
+            normalized.googleSync = .default
         }
         return normalized
     }
@@ -723,48 +465,6 @@ extension JSONDecoder {
     }
 }
 
-enum GoogleTokenStore {
-    private struct TokenFile: Codable {
-        var refreshToken: String
-    }
-
-    private static var fileURL: URL {
-        SharedFiles.directory.appendingPathComponent("google-token.json")
-    }
-
-    static func saveRefreshToken(_ token: String) throws {
-        let tokenFile = TokenFile(refreshToken: token)
-        guard let data = try? JSONEncoder.taskEncoder.encode(tokenFile) else {
-            throw GoogleSyncError.apiError("Could not save Google token.")
-        }
-
-        do {
-            try FileManager.default.createDirectory(at: SharedFiles.directory, withIntermediateDirectories: true)
-            try data.write(to: fileURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        } catch {
-            throw GoogleSyncError.apiError("Could not save Google token.")
-        }
-    }
-
-    static func loadRefreshToken() -> String? {
-        let urls = [
-            fileURL,
-            SharedFiles.legacySharedDirectory.appendingPathComponent("google-token.json")
-        ]
-        guard let data = urls.compactMap({ try? Data(contentsOf: $0) }).first,
-              let tokenFile = try? JSONDecoder.taskDecoder.decode(TokenFile.self, from: data)
-        else {
-            return nil
-        }
-        return tokenFile.refreshToken.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-    }
-
-    static func deleteRefreshToken() {
-        try? FileManager.default.removeItem(at: fileURL)
-    }
-}
-
 final class OAuthLoopbackReceiver: @unchecked Sendable {
     private let path: String
     private var port: UInt16 = 0
@@ -879,6 +579,11 @@ final class OAuthLoopbackReceiver: @unchecked Sendable {
                 return
             }
             defer { Darwin.close(clientDescriptor) }
+            var timeout = timeval(tv_sec: 3, tv_usec: 0)
+            _ = Darwin.setsockopt(clientDescriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            _ = Darwin.setsockopt(clientDescriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            var noSigPipe: Int32 = 1
+            _ = Darwin.setsockopt(clientDescriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
 
             guard let callbackURL = callbackURL(from: clientDescriptor) else {
                 sendResponse(
@@ -904,8 +609,8 @@ final class OAuthLoopbackReceiver: @unchecked Sendable {
                   </style>
                 </head>
                 <body>
-                  <h1>Quiet Tasks connected</h1>
-                  <p>You can close this tab and return to Quiet Tasks.</p>
+                  <h1>Return to Quiet Tasks</h1>
+                  <p>Quiet Tasks will validate this callback. You can close this tab.</p>
                 </body>
                 </html>
                 """,
@@ -934,9 +639,9 @@ final class OAuthLoopbackReceiver: @unchecked Sendable {
         guard let requestLine else { return nil }
 
         let parts = requestLine.split(separator: " ")
-        guard parts.count >= 2 else { return nil }
+        guard parts.count == 3, parts[0] == "GET", parts[2] == "HTTP/1.1" else { return nil }
         let target = String(parts[1])
-        guard target.hasPrefix("/") else { return nil }
+        guard target.hasPrefix("/"), !target.hasPrefix("//") else { return nil }
         guard let url = URL(string: "http://127.0.0.1:\(port)\(target)"),
               url.path == path
         else {
@@ -1031,7 +736,7 @@ enum GoogleOAuthClient {
     static let scope = "https://www.googleapis.com/auth/tasks"
     private static let callbackPath = "/"
 
-    static func authorize(clientID: String) async throws -> GoogleAccessToken {
+    static func authorize(clientID: String, readOnly: Bool = false) async throws -> GoogleAccessToken {
         let trimmedClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedClientID.isEmpty else { throw GoogleSyncError.missingClientID }
 
@@ -1046,7 +751,7 @@ enum GoogleOAuthClient {
             URLQueryItem(name: "client_id", value: trimmedClientID),
             URLQueryItem(name: "redirect_uri", value: receiver.redirectURI),
             URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: scope),
+            URLQueryItem(name: "scope", value: readOnly ? "https://www.googleapis.com/auth/tasks.readonly" : scope),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
             URLQueryItem(name: "code_challenge", value: challenge),
@@ -1055,31 +760,13 @@ enum GoogleOAuthClient {
         ]
 
         guard let authorizationURL = components.url else { throw GoogleSyncError.invalidResponse }
-        let callbackURL = try await OAuthWebAuthenticationSession.authenticate(
-            url: authorizationURL,
-            callbackScheme: "http"
-        )
-        guard let expectedRedirectURL = URL(string: receiver.redirectURI),
-              callbackURL.scheme == expectedRedirectURL.scheme,
-              callbackURL.host == expectedRedirectURL.host,
-              callbackURL.port == expectedRedirectURL.port,
-              callbackURL.path == expectedRedirectURL.path
-        else {
-            throw GoogleSyncError.invalidResponse
+        guard await MainActor.run(body: { NSWorkspace.shared.open(authorizationURL) }) else {
+            throw GoogleSyncError.oauthCancelled
         }
-
-        let queryItems = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        if let error = queryItems.first(where: { $0.name == "error" })?.value {
-            let description = queryItems.first(where: { $0.name == "error_description" })?.value
-            throw GoogleSyncError.apiError(description ?? "Google sign-in failed: \(error)")
-        }
-        guard queryItems.first(where: { $0.name == "state" })?.value == state else {
-            throw GoogleSyncError.invalidResponse
-        }
-        guard let code = queryItems.first(where: { $0.name == "code" })?.value
-        else {
-            throw GoogleSyncError.invalidResponse
-        }
+        let callbackURL = try await withTaskCancellationHandler {
+            try await receiver.waitForCallback(timeout: 180)
+        } onCancel: { receiver.cancel() }
+        let code = try validatedCode(callbackURL: callbackURL, redirectURI: receiver.redirectURI, state: state)
 
         let response = try await exchangeCode(
             code,
@@ -1087,9 +774,10 @@ enum GoogleOAuthClient {
             verifier: verifier,
             redirectURI: receiver.redirectURI
         )
-        if let refreshToken = response.refreshToken {
-            try GoogleTokenStore.saveRefreshToken(refreshToken)
+        guard let refreshToken = response.refreshToken, !refreshToken.isEmpty else {
+            throw GoogleSyncError.missingRefreshToken
         }
+        try GoogleTokenStore.saveRefreshToken(refreshToken)
         return GoogleAccessToken(
             value: response.accessToken,
             expiresAt: Date().addingTimeInterval(TimeInterval(response.expiresIn ?? 3600))
@@ -1099,24 +787,22 @@ enum GoogleOAuthClient {
     static func refreshedAccessToken(clientID: String) async throws -> GoogleAccessToken {
         let trimmedClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedClientID.isEmpty else { throw GoogleSyncError.missingClientID }
-        guard let refreshToken = GoogleTokenStore.loadRefreshToken() else {
+        guard let refreshToken = try GoogleTokenStore.loadRefreshToken() else {
             throw GoogleSyncError.missingRefreshToken
         }
 
         var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        var body = [
+        let body = [
             "client_id": trimmedClientID,
             "refresh_token": refreshToken,
             "grant_type": "refresh_token"
         ]
-        if let clientSecret = GoogleOAuthLocalConfig.clientSecret(for: trimmedClientID) {
-            body["client_secret"] = clientSecret
-        }
         request.httpBody = formEncoded(body)
 
         let response = try await tokenResponse(for: request)
+        if let rotated = response.refreshToken { try GoogleTokenStore.saveRefreshToken(rotated) }
         return GoogleAccessToken(
             value: response.accessToken,
             expiresAt: Date().addingTimeInterval(TimeInterval(response.expiresIn ?? 3600))
@@ -1132,27 +818,30 @@ enum GoogleOAuthClient {
         var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        var body = [
+        let body = [
             "client_id": clientID,
             "code": code,
             "code_verifier": verifier,
             "grant_type": "authorization_code",
             "redirect_uri": redirectURI
         ]
-        if let clientSecret = GoogleOAuthLocalConfig.clientSecret(for: clientID) {
-            body["client_secret"] = clientSecret
-        }
         request.httpBody = formEncoded(body)
         return try await tokenResponse(for: request)
     }
 
     private static func tokenResponse(for request: URLRequest) async throws -> GoogleTokenResponse {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await GoogleHTTP.session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GoogleSyncError.invalidResponse
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
-            throw GoogleSyncError.apiError(apiErrorMessage(from: data) ?? "Google sign-in failed.")
+            if httpResponse.statusCode == 400,
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               object["error"] as? String == "invalid_grant" {
+                try GoogleTokenStore.deleteRefreshToken()
+                throw GoogleSyncError.missingRefreshToken
+            }
+            throw GoogleSyncError.apiError("Google sign-in failed (HTTP \(httpResponse.statusCode)). Reconnect or review your desktop client configuration.")
         }
         return try JSONDecoder.googleDecoder.decode(GoogleTokenResponse.self, from: data)
     }
@@ -1162,7 +851,7 @@ enum GoogleOAuthClient {
         return String((0..<64).compactMap { _ in characters.randomElement() })
     }
 
-    private static func pkceChallenge(for verifier: String) -> String {
+    static func pkceChallenge(for verifier: String) -> String {
         let digest = SHA256.hash(data: Data(verifier.utf8))
         return Data(digest)
             .base64EncodedString()
@@ -1186,67 +875,58 @@ enum GoogleOAuthClient {
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
-    private static func apiErrorMessage(from data: Data) -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let error = object["error"] as? String
-        else {
-            return nil
+    static func validatedCode(callbackURL: URL, redirectURI: String, state: String) throws -> String {
+        guard let expected = URL(string: redirectURI), expected.scheme == "http", expected.host == "127.0.0.1",
+              callbackURL.scheme == expected.scheme, callbackURL.host == expected.host,
+              callbackURL.port == expected.port, callbackURL.path == expected.path,
+              callbackURL.user == nil, callbackURL.password == nil, callbackURL.fragment == nil
+        else { throw GoogleSyncError.invalidResponse }
+        let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func values(_ name: String) -> [String] { items.filter { $0.name == name }.compactMap(\.value) }
+        guard items.filter({ $0.name == "state" }).count == 1, values("state") == [state] else {
+            throw GoogleSyncError.invalidResponse
         }
-        if let description = object["error_description"] as? String {
-            return "\(error): \(description)"
+        if items.contains(where: { $0.name == "error" }) { throw GoogleSyncError.oauthCancelled }
+        guard items.filter({ $0.name == "code" }).count == 1,
+              let code = values("code").first, !code.isEmpty else { throw GoogleSyncError.invalidResponse }
+        return code
+    }
+
+    static func revoke(token: String, session: URLSession = GoogleHTTP.session) async throws {
+        var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/revoke")!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = formEncoded(["token": token])
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw GoogleSyncError.apiError("Google revocation failed. Revoke access in Google Account permissions.")
         }
-        return error
     }
 }
 
-final class OAuthWebAuthenticationSession: NSObject, ASWebAuthenticationPresentationContextProviding {
-    private var session: ASWebAuthenticationSession?
-
-    static func authenticate(url: URL, callbackScheme: String) async throws -> URL {
-        let webSession = OAuthWebAuthenticationSession()
-        return try await webSession.authenticate(url: url, callbackScheme: callbackScheme)
-    }
-
-    func authenticate(url: URL, callbackScheme: String) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.main.async {
-                let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { callbackURL, error in
-                    self.session = nil
-
-                    if let callbackURL {
-                        continuation.resume(returning: callbackURL)
-                    } else if error != nil {
-                        continuation.resume(throwing: GoogleSyncError.oauthCancelled)
-                    } else {
-                        continuation.resume(throwing: GoogleSyncError.invalidResponse)
-                    }
-                }
-
-                session.presentationContextProvider = self
-                session.prefersEphemeralWebBrowserSession = false
-                self.session = session
-
-                guard session.start() else {
-                    self.session = nil
-                    continuation.resume(throwing: GoogleSyncError.apiError("Could not start Google Tasks authorization."))
-                    return
-                }
-            }
-        }
-    }
-
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        NSApplication.shared.keyWindow
-            ?? NSApplication.shared.mainWindow
-            ?? NSApplication.shared.windows.first
-            ?? ASPresentationAnchor()
-    }
+// Never persist HTTP credentials, responses, or cookies, and never forward tokens on redirects.
+final class GoogleHTTP: NSObject, URLSessionTaskDelegate {
+    private static let delegate = GoogleHTTP()
+    static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
+        config.httpCookieStorage = nil
+        config.urlCredentialStorage = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 60
+        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+    }()
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 
 enum GoogleTasksClient {
-    static func fetchTaskLists(accessToken: String) async throws -> [GoogleTaskList] {
+    static func fetchTaskLists(accessToken: String, session: URLSession = GoogleHTTP.session) async throws -> [GoogleTaskList] {
         var lists: [GoogleTaskList] = []
         var pageToken: String?
+        var seenPageTokens = Set<String>()
 
         repeat {
             var components = URLComponents(string: "https://tasks.googleapis.com/tasks/v1/users/@me/lists")!
@@ -1258,9 +938,14 @@ enum GoogleTasksClient {
             }
             var request = URLRequest(url: components.url!)
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            let response = try await googleResponse(GoogleTaskListResponse.self, for: request)
+            let response = try await googleResponse(GoogleTaskListResponse.self, for: request, session: session)
             lists.append(contentsOf: response.items ?? [])
             pageToken = response.nextPageToken
+            if let pageToken {
+                guard seenPageTokens.insert(pageToken).inserted, seenPageTokens.count < 1000 else {
+                    throw GoogleSyncError.invalidResponse
+                }
+            }
         } while pageToken != nil
 
         return lists.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -1269,13 +954,15 @@ enum GoogleTasksClient {
     static func fetchTasks(
         accessToken: String,
         taskListID: String,
-        taskListTitle: String?
+        taskListTitle: String?,
+        session: URLSession = GoogleHTTP.session
     ) async throws -> [TaskItem] {
         var googleTasks: [GoogleTask] = []
         var pageToken: String?
+        var seenPageTokens = Set<String>()
 
         repeat {
-            let encodedListID = taskListID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? taskListID
+            let encodedListID = taskListID.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? taskListID
             var components = URLComponents(string: "https://tasks.googleapis.com/tasks/v1/lists/\(encodedListID)/tasks")!
             components.queryItems = [
                 URLQueryItem(name: "maxResults", value: "100"),
@@ -1288,9 +975,14 @@ enum GoogleTasksClient {
             }
             var request = URLRequest(url: components.url!)
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            let response = try await googleResponse(GoogleTasksResponse.self, for: request)
+            let response = try await googleResponse(GoogleTasksResponse.self, for: request, session: session)
             googleTasks.append(contentsOf: response.items ?? [])
             pageToken = response.nextPageToken
+            if let pageToken {
+                guard seenPageTokens.insert(pageToken).inserted, seenPageTokens.count < 1000 else {
+                    throw GoogleSyncError.invalidResponse
+                }
+            }
         } while pageToken != nil
 
         return mappedTasks(from: googleTasks, taskListID: taskListID, taskListTitle: taskListTitle)
@@ -1301,26 +993,27 @@ enum GoogleTasksClient {
         taskListID: String,
         taskID: String,
         done: Bool,
-        completedAt: Date
+        completedAt: Date,
+        session: URLSession = GoogleHTTP.session
     ) async throws -> GoogleTask {
-        let encodedListID = taskListID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? taskListID
-        let encodedTaskID = taskID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? taskID
+        let encodedListID = taskListID.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? taskListID
+        let encodedTaskID = taskID.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? taskID
         let url = URL(string: "https://tasks.googleapis.com/tasks/v1/lists/\(encodedListID)/tasks/\(encodedTaskID)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: googleCompletionBody(done: done, completedAt: completedAt))
-        return try await googleResponse(GoogleTask.self, for: request)
+        return try await googleResponse(GoogleTask.self, for: request, session: session)
     }
 
-    private static func googleResponse<T: Decodable>(_ type: T.Type, for request: URLRequest) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(for: request)
+    private static func googleResponse<T: Decodable>(_ type: T.Type, for request: URLRequest, session: URLSession) async throws -> T {
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GoogleSyncError.invalidResponse
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
-            throw GoogleSyncError.apiError(apiErrorMessage(from: data) ?? "Google Tasks request failed.")
+            throw GoogleSyncError.apiError("Google Tasks request failed (HTTP \(httpResponse.statusCode)).")
         }
         return try JSONDecoder.googleDecoder.decode(T.self, from: data)
     }
@@ -1338,7 +1031,7 @@ enum GoogleTasksClient {
         ]
     }
 
-    private static func mappedTasks(
+    static func mappedTasks(
         from googleTasks: [GoogleTask],
         taskListID: String,
         taskListTitle: String?
@@ -1391,23 +1084,6 @@ enum GoogleTasksClient {
         return trimmed.isEmpty ? "Untitled Google task" : trimmed
     }
 
-    private static func apiErrorMessage(from data: Data) -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        if let error = object["error"] as? [String: Any] {
-            if let message = error["message"] as? String {
-                return message
-            }
-            if let status = error["status"] as? String {
-                return status
-            }
-        }
-        if let error = object["error"] as? String {
-            return error
-        }
-        return nil
-    }
 }
 
 enum TaskFilter: String, CaseIterable, Identifiable {
@@ -1454,6 +1130,14 @@ final class TaskModel: ObservableObject {
     init() {
         tasks = TaskStore.load()
         settings = SettingsStore.load()
+        // First-run migration is local only. Never authorize or contact Google here.
+        do { _ = try GoogleTokenStore.loadRefreshToken() }
+        catch {
+            settings.googleSync.isConnected = false
+            googleStatus = "Credential migration incomplete: " + error.localizedDescription
+            // Do not create a new settings file merely because legacy access was denied.
+            if (try? SharedFiles.store().read("settings.json")) != nil { SettingsStore.save(settings) }
+        }
         NotificationScheduler.sync(tasks: tasks, settings: notificationSettings)
         WidgetCenter.shared.reloadAllTimelines()
         startAutoSync()
@@ -1492,7 +1176,7 @@ final class TaskModel: ObservableObject {
     }
 
     func syncGoogleTasksIfPossible() async {
-        guard settings.googleSync.isConnected,
+        guard SharedFiles.lastError == nil, settings.googleSync.isConnected,
               settings.googleSync.selectedTaskListID != nil
         else {
             return
@@ -1685,6 +1369,11 @@ final class TaskModel: ObservableObject {
     }
 
     func updateGoogleSettings(_ googleSettings: GoogleSyncSettings) {
+        guard !isGoogleBusy else { return }
+        guard !settings.googleSync.isConnected || (
+            googleSettings.clientID == settings.googleSync.clientID &&
+            googleSettings.readOnly == settings.googleSync.readOnly
+        ) else { return }
         settings.googleSync = googleSettings
         SettingsStore.save(settings)
     }
@@ -1693,13 +1382,13 @@ final class TaskModel: ObservableObject {
         await runGoogleOperation {
             var googleSettings = self.settings.googleSync
             googleSettings.clientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
-            if googleSettings.clientID.isEmpty {
-                googleSettings.clientID = GoogleSyncSettings.defaultClientID
-            }
+            guard !googleSettings.clientID.isEmpty else { throw GoogleSyncError.missingClientID }
+            // Finish migration/cleanup before any new authorization request.
+            _ = try GoogleTokenStore.loadRefreshToken()
             self.settings.googleSync = googleSettings
             SettingsStore.save(self.settings)
 
-            let token = try await GoogleOAuthClient.authorize(clientID: googleSettings.effectiveClientID)
+            let token = try await GoogleOAuthClient.authorize(clientID: googleSettings.effectiveClientID, readOnly: googleSettings.readOnly ?? false)
             googleSettings.isConnected = true
             self.settings.googleSync = googleSettings
             SettingsStore.save(self.settings)
@@ -1731,6 +1420,11 @@ final class TaskModel: ObservableObject {
     }
 
     private func setGoogleTaskCompletion(_ task: TaskItem, done: Bool) async {
+        guard !isGoogleBusy, settings.googleSync.isConnected else { return }
+        guard settings.googleSync.readOnly != true else {
+            googleStatus = "Read-only mode cannot complete tasks. Disconnect and reconnect with completion enabled."
+            return
+        }
         guard let taskListID = task.externalListID,
               let taskID = task.externalID
         else {
@@ -1808,14 +1502,53 @@ final class TaskModel: ObservableObject {
         return message
     }
 
-    func disconnectGoogle() {
-        GoogleTokenStore.deleteRefreshToken()
+    func migrateLegacyData() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select an old QuietTasks data folder. Verified imported files are removed from that folder. Quit older copies of the app and widget first."
+        panel.begin { response in
+            guard response == .OK, let source = panel.url else { return }
+            let scoped = source.startAccessingSecurityScopedResource()
+            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+            do {
+                let migration = LegacyDataMigration(destination: try SharedFiles.store(), vault: GoogleTokenStore.store.vault)
+                try migration.run(from: source)
+                SharedFiles.lastError = nil
+                self.reload()
+                self.googleStatus = "Legacy data imported and verified source files removed. Review other old copies and revoke old Google access before reconnecting."
+            } catch {
+                self.googleStatus = "Migration incomplete: " + error.localizedDescription
+            }
+        }
+    }
+
+    func disconnectGoogle() async {
+        guard !isGoogleBusy else { return }
+        isGoogleBusy = true
+        defer { isGoogleBusy = false }
+        // Stop automatic sync first. Keep the credential only in memory while revoking.
+        settings.googleSync.isConnected = false
+        SettingsStore.save(settings)
+        let candidates = GoogleTokenStore.store.revocationCandidates()
+        var cleanupFailed = !candidates.complete
+        do { try GoogleTokenStore.deleteRefreshToken() } catch { cleanupFailed = true }
         tasks.removeAll { $0.source == .google }
         googleTaskLists = []
         settings.googleSync = .default
         SettingsStore.save(settings)
         persist()
-        googleStatus = "Google Tasks disconnected."
+        var revocationFailed = false
+        for token in candidates.tokens {
+            do { try await GoogleOAuthClient.revoke(token: token) }
+            catch { revocationFailed = true }
+        }
+        if cleanupFailed || revocationFailed {
+            googleStatus = "Disconnected locally. Credential cleanup or Google revocation could not be confirmed. Remove legacy copies and revoke access in your Google Account permissions before reconnecting."
+        } else {
+            googleStatus = "Google Tasks disconnected; local credentials cleared and available Google token revoked."
+        }
     }
 
     func selectGoogleTaskList(_ list: GoogleTaskList) {
@@ -1896,7 +1629,7 @@ final class TaskModel: ObservableObject {
             taskListTitle: googleSettings.selectedTaskListTitle
         )
         let latestSavedTasks = TaskStore.load()
-        let localTasks = mergedLocalTasksForGoogleSync(
+        let localTasks = Self.mergedLocalTasksForGoogleSync(
             latestSavedTasks: latestSavedTasks,
             currentTasks: tasks,
             syncStartedAt: syncStartedAt,
@@ -1909,7 +1642,7 @@ final class TaskModel: ObservableObject {
         return syncedTasks.count
     }
 
-    private func mergedLocalTasksForGoogleSync(
+    static func mergedLocalTasksForGoogleSync(
         latestSavedTasks: [TaskItem],
         currentTasks: [TaskItem],
         syncStartedAt: Date,
@@ -1948,6 +1681,10 @@ final class TaskModel: ObservableObject {
 
     private func runGoogleOperation(_ operation: @escaping () async throws -> Void) async {
         guard !isGoogleBusy else { return }
+        guard SharedFiles.lastError == nil else {
+            googleStatus = "Resolve local storage access before syncing."
+            return
+        }
         isGoogleBusy = true
         googleStatus = nil
         do {
@@ -2030,6 +1767,10 @@ struct ContentView: View {
             .frame(minWidth: 220)
         } detail: {
             VStack(alignment: .leading, spacing: 0) {
+                if let error = SharedFiles.lastError {
+                    Text(error + " Changes are not being saved. Quit and resolve storage access before continuing.")
+                        .foregroundStyle(.red).padding()
+                }
                 header
                     .padding(.horizontal, 28)
                     .padding(.top, 26)
@@ -2709,7 +2450,7 @@ struct PinToggle: View {
 struct SettingsSheet: View {
     @ObservedObject var model: TaskModel
     @State private var draft: AppSettings
-    @State private var showAdvancedGoogleSettings = false
+    @State private var showAdvancedGoogleSettings = true
     var onDone: () -> Void
 
     init(model: TaskModel, onDone: @escaping () -> Void) {
@@ -2800,19 +2541,28 @@ struct SettingsSheet: View {
                 }
             }
 
+            Button("Migrate legacy data folder…") { model.migrateLegacyData() }
+                .disabled(model.isGoogleBusy || model.settings.googleSync.isConnected)
+            Text("Migration is one-time and removes verified source files. Review all other old copies before reconnecting Google.")
+                .font(.caption).foregroundStyle(.secondary)
+
             Text("Optional Google Tasks sync imports tasks into the app and widget. Completing or restoring a synced task here updates Google Tasks too.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
             DisclosureGroup("Advanced", isExpanded: $showAdvancedGoogleSettings) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Use this only if you are running a fork with your own Google Cloud Desktop OAuth client.")
+                    Text("Required: supply your own Google Cloud Desktop OAuth client ID. Disconnect before changing it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
                     TextField("Desktop OAuth client ID", text: $draft.googleSync.clientID)
                         .textFieldStyle(.roundedBorder)
-                        .disabled(model.isGoogleBusy)
+                        .disabled(model.isGoogleBusy || draft.googleSync.isConnected)
+                    Toggle("Read-only Google Tasks (reconnect to change)", isOn: Binding(
+                        get: { draft.googleSync.readOnly ?? false },
+                        set: { draft.googleSync.readOnly = $0 }
+                    )).disabled(model.isGoogleBusy || draft.googleSync.isConnected)
                 }
                 .padding(.top, 6)
             }
@@ -2838,8 +2588,10 @@ struct SettingsSheet: View {
                     .disabled(model.isGoogleBusy || draft.googleSync.selectedTaskListID == nil)
 
                     Button(role: .destructive) {
-                        model.disconnectGoogle()
-                        draft.googleSync = model.settings.googleSync
+                        Task {
+                            await model.disconnectGoogle()
+                            draft.googleSync = model.settings.googleSync
+                        }
                     } label: {
                         Label("Disconnect", systemImage: "xmark.circle")
                     }
@@ -2853,6 +2605,12 @@ struct SettingsSheet: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isGoogleBusy)
+                    Button("Clear credentials / revoke access", role: .destructive) {
+                        Task {
+                            await model.disconnectGoogle()
+                            draft.googleSync = model.settings.googleSync
+                        }
+                    }.disabled(model.isGoogleBusy)
                 }
             }
 
@@ -2963,13 +2721,22 @@ struct ProgressRing: View {
     }
 }
 
+#if !QUIET_TASKS_TESTING
 @main
 struct QuietTasksApp: App {
+    init() { GroupSharingProbe.runIfRequested(writer: true) }
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         WindowGroup("Quiet Tasks", id: "main") {
-            ContentView()
+            if let error = SharedFiles.configurationError {
+                VStack(spacing: 16) {
+                    Text("Signed App Group required").font(.title)
+                    Text(error)
+                }.padding().frame(minWidth: 500, minHeight: 220)
+            } else {
+                ContentView()
+            }
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -2983,3 +2750,5 @@ struct QuietTasksApp: App {
         }
     }
 }
+
+#endif
