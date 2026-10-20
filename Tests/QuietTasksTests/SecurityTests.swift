@@ -143,6 +143,15 @@ final class StorageTests: XCTestCase {
         XCTAssertNil(vault.token)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
+    func testOversizedWritePreservesExistingDataAndPrivateDirectory() throws {
+        let store = GroupFileStore(directory: root)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        try store.write(Data("[]".utf8), name: "tasks.json")
+        let attrs = try FileManager.default.attributesOfItem(atPath: root.path)
+        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        XCTAssertThrowsError(try store.write(Data(repeating: 0, count: GroupFileStore.maximumFileSize + 1), name: "tasks.json"))
+        XCTAssertEqual(try store.read("tasks.json"), Data("[]".utf8))
+    }
     func testRealKeychainRoundTripUpdateAndDelete() throws {
         // Unique service; synthetic data only; cleans its own item even on failure.
         let vault = KeychainTokenVault(service: "QuietTasks.SecurityTests." + UUID().uuidString)

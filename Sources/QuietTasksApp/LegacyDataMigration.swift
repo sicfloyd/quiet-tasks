@@ -37,6 +37,7 @@ struct LegacyDataMigration {
         guard !imports.isEmpty else { throw StorageError.invalidData }
         // Validate everything before changing either store. Never merge into a nonempty installation.
         for (name, data) in imports {
+            guard data.count <= GroupFileStore.maximumFileSize else { throw StorageError.invalidData }
             if let existing = try destination.read(name), existing != data { throw StorageError.legacyConflict }
         }
         let tokens = MigratingTokenStore(vault: vault, legacyURLs: [source.appendingPathComponent("google-token.json")])

@@ -57,6 +57,7 @@ enum SafeFile {
 
 struct GroupFileStore {
     let directory: URL
+    static let maximumFileSize = 8 * 1024 * 1024
     static let allowedNames: Set<String> = ["tasks.json", "settings.json", "widget-state.json", "migration-complete", "token-migration-complete", "group-probe.json"]
 
     func url(_ name: String) throws -> URL {
@@ -68,11 +69,14 @@ struct GroupFileStore {
     func read(_ name: String) throws -> Data? { try SafeFile.read(url(name)) }
 
     func write(_ data: Data, name: String) throws {
+        guard data.count <= Self.maximumFileSize else { throw StorageError.invalidData }
         let destination = try url(name)
         // Validate existing destination before replacing it; never follow a link.
         _ = try SafeFile.read(destination)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
+        // Protect atomic temporary files as well, including pre-existing 0755 legacy group folders.
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         try data.write(to: destination, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
         guard try read(name) == data else { throw StorageError.invalidData }
