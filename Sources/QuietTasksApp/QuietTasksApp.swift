@@ -2605,6 +2605,12 @@ struct SettingsSheet: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isGoogleBusy)
+                    Button("Clear credentials / revoke access", role: .destructive) {
+                        Task {
+                            await model.disconnectGoogle()
+                            draft.googleSync = model.settings.googleSync
+                        }
+                    }.disabled(model.isGoogleBusy)
                 }
             }
 

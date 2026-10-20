@@ -30,7 +30,7 @@ enum SafeFile {
               info.st_uid == getuid(), info.st_nlink == 1,
               info.st_size >= 0, info.st_size <= maximumSize else { throw StorageError.unsafeFile }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
-        let data = try handle.readToEnd() ?? Data()
+        let data = try handle.read(upToCount: maximumSize + 1) ?? Data()
         guard data.count <= maximumSize else { throw StorageError.invalidData }
         return data
     }
