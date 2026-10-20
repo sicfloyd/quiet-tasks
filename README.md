@@ -46,6 +46,16 @@ no writable fallback path. Refresh tokens use macOS Keychain, never shared JSON.
 See [security review](SECURITY_REVIEW.md), [cloud build and migration instructions](Docs/SECURITY_AND_RELEASE.md),
 and [actual validation results](Docs/VALIDATION.md).
 
+## Personal testing with a free Apple Account
+
+The cloud workflow also attempts ad-hoc signing without paid Apple credentials.
+See [personal installation and testing](Docs/PERSONAL_TESTING.md) for the downloadable
+app, actual signature/container diagnostics, supported per-app Gatekeeper review,
+and macOS widget checks. Ad-hoc signing does not establish App Group authorization
+or WidgetKit registration; those may fail. Local Xcode is not needed to build or
+inspect the artifact. Sandbox, Keychain storage, and the one-container policy stay
+enabled. No Google account is connected by CI.
+
 ## Download
 
 Use this fork's **Actions → macOS test build → Artifacts** for the explicitly

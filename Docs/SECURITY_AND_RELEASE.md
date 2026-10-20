@@ -1,5 +1,10 @@
 # Cloud development, migration, and release
 
+For the current free-account personal-test goal, start with
+[ad-hoc installation/testing](PERSONAL_TESTING.md). No signing credentials are needed
+for that experiment. The Developer ID/notarization route below is optional future
+work; it is not required to produce an ad-hoc artifact.
+
 The app remains native SwiftUI + WidgetKit, targets macOS 14+, and retains App
 Sandbox and hardened runtime. Development can be done in this Linux workspace;
 all native compilation/tests run on GitHub-hosted macOS runners. No Google account

@@ -45,3 +45,20 @@ jobs:
           path: dist/Quiet-Tasks-UNSIGNED-TEST-ONLY.zip
           if-no-files-found: error
           retention-days: 7
+      - name: Ad-hoc personal-test signing and runtime experiment
+        run: bash Scripts/build-adhoc-test.sh 'XcodeDerivedData/Build/Products/Release/Quiet Tasks.app'
+      - name: Upload ad-hoc diagnostics (including failures)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Quiet-Tasks-ADHOC-DIAGNOSTICS
+          path: dist/adhoc-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload ad-hoc personal-test app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Quiet-Tasks-ADHOC-PERSONAL-TEST
+          path: dist/Quiet-Tasks-ADHOC-PERSONAL-TEST.zip
+          if-no-files-found: error
+          retention-days: 7
