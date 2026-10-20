@@ -14,6 +14,12 @@ hardened runtime, one App Group for shared data, no writable fallback directory,
 no token JSON writes, and no upstream OAuth client ID. No Google account or Apple
 credentials are used by the build or nonce probes.
 
+The first CI experiment did produce an ad-hoc app, with static signatures and
+sandbox/App Group declarations verified. Its app writer exited 0, but direct
+extension execution aborted (`An XPC Service cannot be run directly`) and Gatekeeper
+assessment rejected the app (exit 3). Full widget sharing and personal Mac launch
+remain unverified. See [the actual validation record](VALIDATION.md).
+
 ## Download the artifacts
 
 In this fork, open **Actions → macOS test build**, select the run for the reviewed
@@ -101,23 +107,21 @@ restore it in the app, check widget updates, try widget completion, then restart
 the app and widget to verify persistence. Check both small and larger widget sizes.
 A missing widget in the gallery is a registration failure, not an installation pass.
 
-For a separate non-task container check, Terminal can run the same nonce probe:
+The main-app nonce probe can check its own container, but **do not run the widget
+extension executable directly**: the CI attempt aborted with `An XPC Service cannot
+be run directly.` Actual widget reads must be tested through WidgetKit. The CI
+PluginKit registration/listing attempt is only a registry check; success there is
+not proof that the widget launches or appears in the gallery. Direct app execution
+also does not establish Finder/LaunchServices launch or runtime sandbox enforcement.
 
-```bash
-nonce="$(uuidgen)"
-"/Applications/Quiet Tasks.app/Contents/MacOS/Quiet Tasks" --quiettasks-group-probe "$nonce"
-# Record the first exit status before running the extension:
-echo "$?"
-"/Applications/Quiet Tasks.app/Contents/PlugIns/QuietTasksWidgetExtension.appex/Contents/MacOS/QuietTasksWidgetExtension" --quiettasks-group-probe "$nonce"
-echo "$?"
-```
-
-Only two zero exits verify this probe. Do not infer success from an empty Terminal
-window. Direct extension execution may itself be unsupported; desktop WidgetKit
-behavior is a separate check. Do not authorize Google until local storage/sharing
-works and you separately choose to test sync. Your own Desktop OAuth client ID is
-required; the Keychain migration and cleanup instructions still apply. Never paste
-refresh tokens into issues or chat. No account testing is performed automatically.
+Ad-hoc code identities can change across rebuilds. Keychain may prompt or deny
+access after replacing the app. Approve only a reviewed app through supported
+macOS prompts; do not change Keychain ACLs to allow all applications. Real-app
+Keychain access and Google consent remain separate, unperformed account tests.
+Do not authorize Google until local storage/sharing works and you separately
+choose to test sync. Your own Desktop OAuth client ID is required; the Keychain
+migration and cleanup instructions still apply. Never paste refresh tokens into
+issues or chat. No account testing is performed automatically.
 
 Record macOS version, run/commit ID, signature results, the exact visible error,
 probe exit statuses, whether the widget appears, and whether updates work. Console

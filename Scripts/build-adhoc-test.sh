@@ -61,7 +61,7 @@ print('Ad-hoc signatures and requested sandbox/App Group entitlements verified f
 PY
 # Runtime authorization is a different result from static signature verification.
 python3 - <<'PY'
-import json, os, pathlib, signal, subprocess, uuid
+import json, os, pathlib, platform, plistlib, signal, subprocess, uuid
 root = pathlib.Path(os.environ['ADHOC_DIAGNOSTICS'])
 app = pathlib.Path(os.environ['ADHOC_APP'])
 widget = pathlib.Path(os.environ['ADHOC_WIDGET'])
@@ -77,13 +77,26 @@ def run(command):
         return {'exit_code': None, 'stdout': '', 'stderr': 'Timed out after 25 seconds; process group terminated.', 'timed_out': True}
 write = run([str(app / 'Contents/MacOS/Quiet Tasks'), '--quiettasks-group-probe', nonce])
 read = run([str(widget / 'Contents/MacOS/QuietTasksWidgetExtension'), '--quiettasks-group-probe', nonce])
+with (widget / 'Contents/Info.plist').open('rb') as f:
+    widget_id = plistlib.load(f)['CFBundleIdentifier']
+registration = run(['/usr/bin/pluginkit', '-a', str(widget)])
+listing = run(['/usr/bin/pluginkit', '-m', '-v', '-i', widget_id])
+unregistration = run(['/usr/bin/pluginkit', '-r', str(widget)])
+sharing = 'passed-on-CI-host' if write['exit_code'] == read['exit_code'] == 0 else 'failed-or-unavailable'
+if 'An XPC Service cannot be run directly' in read['stderr']:
+    sharing = 'NOT VERIFIED: direct XPC extension launch unsupported'
 assessment = run(['/usr/sbin/spctl', '--assess', '--type', 'execute', '--verbose=2', str(app)])
 result = {
+    'macos_version': platform.mac_ver()[0], 'architecture': platform.machine(),
+    'workflow_commit': os.environ.get('GITHUB_SHA'),
     'static_signature_and_entitlement_verification': 'passed',
     'app_group_writer': write, 'extension_group_reader': read,
-    'group_read_after_write': 'passed-on-CI-host' if write['exit_code'] == read['exit_code'] == 0 else 'failed-or-unavailable',
+    'group_read_after_write': sharing,
+    'plugin_registration_attempt': registration, 'plugin_registry_listing': listing,
+    'plugin_registration_cleanup': unregistration,
     'gatekeeper_assessment': assessment,
     'widgetkit_desktop_registration_and_timeline': 'NOT TESTED',
+    'finder_launch_and_runtime_sandbox_enforcement': 'NOT TESTED',
     'personal_mac_installation': 'NOT TESTED',
     'apple_signing_team': 'UNSET', 'apple_notarization': 'NOT PERFORMED',
 }
@@ -94,6 +107,7 @@ summary = ('## Ad-hoc personal-test experiment\n\n'
            f'CI App Group nonce read-after-write: **{result["group_read_after_write"]}** '
            f'(writer exit {write["exit_code"]}, extension exit {read["exit_code"]}).\n\n'
            f'Gatekeeper assessment exit: **{assessment["exit_code"]}** (see diagnostics).\n\n'
+           f'PluginKit registration exit: **{registration["exit_code"]}**; registry query exit: **{listing["exit_code"]}**. These are registry checks, not widget execution.\n\n'
            '**WidgetKit desktop registration, personal Mac installation, Apple signing and notarization: not verified.** '
            'An embedded entitlement is not Apple authorization. Runtime probe failures are recorded, not treated as passes.\n')
 (root / 'RESULTS.md').write_text(summary)

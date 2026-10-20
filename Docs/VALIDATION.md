@@ -51,6 +51,42 @@ Swift sources. Consult [PR checks](https://github.com/sicfloyd/quiet-tasks/pull/
 for the newest workflow run; this record cites checks actually observed, not future
 workflow definitions. Intermediate superseded runs were canceled, not test failures.
 
+## Ad-hoc personal-test experiment — 2026-10-21
+
+[Run 39459408270](https://github.com/sicfloyd/quiet-tasks/actions/runs/39459408270)
+for `5d8c0f99118e8da9e43cf48d6488342438e88ec6` passed 32 tests, the unsigned
+build, ad-hoc signing, static verification, and three artifact uploads. Neither
+paid credentials nor a Personal Team login were used. Actual results from its logs:
+
+| Check | Observed result |
+| --- | --- |
+| App and embedded extension signatures | Ad-hoc signatures strictly verified |
+| Sandbox/App Group declarations | Both actual signed entitlement plists matched requested values; hardened runtime retained |
+| Main-app nonce container writer | Exit 0 on CI |
+| Direct extension reader | Exit -6 (SIGABRT), `An XPC Service cannot be run directly.` |
+| App-to-widget shared read | **Unverified**, because the extension could not run through this direct-execution harness |
+| Gatekeeper assessment | Exit 3; app `rejected` |
+| WidgetKit desktop registration/timelines | Not tested |
+| Personal Mac installation / real-app Keychain / Google account | Not tested |
+| Apple-issued signing / notarization | Not performed |
+
+The ad-hoc artifact was produced: `12281892565`, **Quiet-Tasks-ADHOC-PERSONAL-TEST**,
+service digest `sha256:19d01ac8f21ae8cd2f92b81e1196a9aaa2a1e3f391143966ed53c39c6aa6c9cc`.
+Diagnostics artifact `12281384380` contains actual signatures, entitlements, runtime
+JSON, and the inner ZIP checksum. This records CI evidence, not a local binary
+inspection or proof of Finder/WidgetKit launch. The overall workflow passing does
+not turn the unsupported extension probe or rejected Gatekeeper assessment into a pass.
+
+The paid release script's identical direct-extension check was also found invalid:
+it would abort before WidgetBundle initialization even before a shared read could
+be tested. It now checks the app writer and explicitly reports widget reads pending;
+it does not claim a replacement widget runtime test passed. The paid signing job
+has still not been executed. Subsequent diagnostics add a separate PluginKit
+registration/listing experiment and host OS metadata; check PR results for that run.
+See [personal testing instructions](PERSONAL_TESTING.md) for the current free-account
+path, per-app review options, and explicit stop conditions. No protection was removed
+to make runtime checks pass.
+
 ## Linux workspace checks
 
 - Verified the uploaded preliminary findings against source, project settings,

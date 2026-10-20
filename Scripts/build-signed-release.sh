@@ -28,8 +28,9 @@ for kind, bundle in [('app', os.environ['APP_ID']), ('widget', os.environ['WIDGE
 PY
 mkdir -p dist
 ditto -c -k --sequesterRsrc --keepParent "$app" dist/Quiet-Tasks-signed.zip
-# Both real signed executable identities must agree on a fresh nonce in the same container.
-# This check intentionally fails if provisioning or sandbox access prevents sharing.
+# Direct app execution can check its own container. A widget extension is an XPC service:
+# direct execution aborts before WidgetBundle initialization and cannot verify shared reads.
+# WidgetKit launch/timeline/read-after-write remains an explicit remote-desktop acceptance check.
 nonce="$(uuidgen)"
 "$app/Contents/MacOS/Quiet Tasks" --quiettasks-group-probe "$nonce"
-"$widget/Contents/MacOS/QuietTasksWidgetExtension" --quiettasks-group-probe "$nonce"
+printf '%s\n' 'Main-app container write passed. WidgetKit shared reads and timeline behavior remain UNVERIFIED; validate through the desktop widget before installation/distribution approval.'

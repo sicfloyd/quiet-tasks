@@ -139,15 +139,16 @@ inspect that commit's workflow and scripts before granting access to secrets.
 Never run the signing job against untrusted PR code. Certificates/keys go into
 temporary runner files and a temporary Keychain, are cleaned in an always step,
 and are never uploaded. Do not enable shell tracing. The job builds with separate
-profiles, verifies embedded signatures/entitlements, runs a signed app/extension
-App Group nonce probe, submits to Apple notarization, requires `Accepted`, staples,
+profiles, verifies embedded signatures/entitlements, checks a signed main-app
+container nonce write (widget shared reads remain unverified), submits to Apple notarization, requires `Accepted`, staples,
 checks the ticket and Gatekeeper assessment, and uploads only a review-required
-signed ZIP. A direct extension probe may be unsupported by a runner/runtime; its
-failure must be investigated, not removed or relabeled as a pass.
+signed ZIP. The direct extension probe was attempted and aborted with `An XPC Service cannot
+be run directly`; it cannot serve as a required widget runtime test. The release
+script checks the app writer and explicitly leaves widget reads unverified.
 
-The nonce probe uses the two actual signed executable identities and a dedicated
-non-task file. It proves container access/read-after-write if it passes; it does
-**not** prove WidgetKit UI registration or timeline behavior. Before final
+The app nonce probe uses a dedicated non-task file and verifies only the app
+writer. A direct extension launch cannot verify reads because it is an XPC service.
+WidgetKit registration, shared reads, and timeline behavior remain **unverified**. Before final
 installation/distribution, validate on an authorized remote macOS 14+ desktop
 (or your own reviewed external test service, keeping work off your Mac): launch
 the app, create/update/complete a synthetic local task, add the widget, verify its
