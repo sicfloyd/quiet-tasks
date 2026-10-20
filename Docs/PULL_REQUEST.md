@@ -1,36 +1,9 @@
-Harden Google Tasks credentials and shared widget storage; add macOS test CI
+Refresh tokens previously persisted to JSON, while the app/widget replicated private task data across fallback directories. This PR keeps SwiftUI and WidgetKit, stores refresh tokens in app-only Keychain items, restricts shared data to one provisioned App Group, and adds verified one-time migration/cleanup with stale-token resurrection protection. It requires your own desktop OAuth client ID, checks PKCE/state/loopback callbacks, rejects HTTP redirects, and offers optional read-only sync while preserving completion by default.
 
-The previous app wrote refresh tokens to JSON, replicated task data across fallback
-paths, and used upstream signing/OAuth identifiers. This change keeps SwiftUI and
-WidgetKit, moves refresh tokens into Keychain, restricts task/settings writes to
-one configured signed App Group, adds checked one-time migration/cleanup, requires
-an explicitly supplied desktop OAuth client ID, and hardens callback/HTTP handling.
-Read-only sync is optional; completion/restore remain the default.
+The threat model covers local users/unsafe legacy files, callback spoofing, credential persistence and redirects, and untrusted CI inputs. [SECURITY_REVIEW.md](https://github.com/sicfloyd/quiet-tasks/blob/security/harden-google-tasks/SECURITY_REVIEW.md) records confirmed baseline findings with file/line references and distinguishes potential risks.
 
-Threat model: local users and unsafe legacy files, callback spoofing, credential
-persistence/redirects, and untrusted CI inputs. Confirmed baseline findings and
-file/line references are in SECURITY_REVIEW.md; runtime risks are distinguished
-from source-confirmed behavior. Tokens remain outside shared data. File cleanup
-cannot erase backups, and inaccessible old containers require explicit cleanup.
+Validation: [macOS source run](https://github.com/sicfloyd/quiet-tasks/actions/runs/39454815319) passed **32 tests, zero failures**, including synthetic real-Keychain storage and mocked Google sync/error handling. The unsigned xcodebuild succeeded; its ZIP listing contains both the app and embedded widget executables, and artifact upload passed. [Validation record](https://github.com/sicfloyd/quiet-tasks/blob/security/harden-google-tasks/Docs/VALIDATION.md) distinguishes locally inspected artifacts, native checks, and unperformed checks.
 
-Tests added cover token storage/migration failures and conflicts, filesystem
-boundaries, settings, PKCE/state, mocked Google Tasks sync/completion/errors, and
-concurrent local-change merge behavior. Linux validation performed: Swift syntax
-parsing (not compilation), project/entitlement/plist/scheme/workflow consistency,
-release shell syntax, and git diff checks. Native tests and xcodebuild have NOT
-been executed locally: Swift/Xcode are unavailable here. See Docs/VALIDATION.md
-for exact evidence and outstanding acceptance checks; do not infer CI success
-from workflow definitions.
+Retrieve the test ZIP from **Actions → macOS test build → exact commit run → Artifacts → Quiet-Tasks-UNSIGNED-TEST-ONLY**. It is not an installation release. [Migration/release instructions](https://github.com/sicfloyd/quiet-tasks/blob/security/harden-google-tasks/Docs/SECURITY_AND_RELEASE.md) cover your team/IDs/profiles, protected signing secrets and required reviewers, and separate manual notarization. Privacy documentation now matches the implementation.
 
-The macOS workflow runs XCTest via SwiftPM and xcodebuild, verifies the app embeds
-the widget executable, and uploads Quiet-Tasks-UNSIGNED-TEST-ONLY. Retrieve it via
-this fork's Actions → macOS test build → exact commit run → Artifacts. It is an
-unsigned test artifact, not an installation release. A separate manual job supports
-protected Developer ID/profile/notarization secrets and checks signatures, App
-Group sharing, notarization acceptance, and Gatekeeper without bypasses. Required
-GitHub environment reviewers must be configured before adding secrets.
-
-Apple team/provisioning, signed widget behavior, interactive OAuth, signing, and
-notarization remain incomplete until actually performed. No Google account was
-connected, personal credentials used, binary deployed, or GitHub Release published.
-Migration/release instructions and the updated privacy policy describe these limits.
+**Still incomplete:** signed App Group/desktop-widget behavior, Developer ID signing/notarization, and interactive Google-account testing. Inaccessible legacy copies/backups require explicit cleanup; atomic file writes do not guarantee multi-process edit transactions. No Google account was connected, personal credentials used, binary deployed, or release published. Keep this PR in draft pending signed acceptance review.

@@ -76,12 +76,12 @@ imports and stale task resurrection. Conflicting destination data is rejected;
 resolve it deliberately rather than overwriting it. If a migration is interrupted,
 retry before editing data; already-written destination bytes must agree.
 
-On first launch, recognized token locations are checked locally. Token migration
+On first launch, recognized token locations are checked locally. The unconnected Settings view also offers **Clear credentials / revoke access** for failed authorizations or migration conflicts. Token migration
 uses a non-shared Keychain item scoped to the app bundle ID, reads only owned regular
 files under owned, non-group/world-writable, non-linked directories, rejects
 multiple different credentials, verifies a Keychain read-back, then removes all
 recognized legacy copies. A save/delete/cleanup failure is reported, and failed
-first-run migration disables automatic sync. Connecting also repeats the local
+first-run migration disables automatic sync. A non-secret migration marker prevents stale token files from being imported again after a completed migration or disconnect. Connecting also repeats the local
 credential checks before requesting Google authorization. No token JSON is ever
 written by the new implementation.
 

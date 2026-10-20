@@ -31,7 +31,7 @@ implementation. Access tokens stay in memory. HTTP requests use an ephemeral
 session without persistent caches/cookies/credential storage; redirects are
 rejected. Token contents and server response bodies are not logged.
 
-Disconnect stops sync, attempts to clear the Keychain item and recognized legacy
+Disconnect (also available as Clear credentials / revoke access before connection) stops sync, attempts to clear the Keychain item and recognized legacy
 token files, removes cached Google tasks, and attempts HTTPS token revocation.
 Offline revocation and inaccessible or conflicting legacy files can fail; the UI
 reports incomplete cleanup and instructs you to revoke access through Google
@@ -42,7 +42,7 @@ cannot be discovered reliably by this sandboxed application.
 
 Earlier versions wrote plaintext `google-token.json` and task/settings copies to
 multiple directories. Local token migration verifies the Keychain write before
-removing recognized, safely accessible legacy copies. Conflicting tokens,
+removing recognized, safely accessible legacy copies. A non-secret migration marker prevents reimporting stale token files after completed migration or disconnect. Conflicting tokens,
 unreadable files, symlinks, unsafe ownership/permissions, or cleanup failures
 require intervention; they are not treated as successful migration. A one-time,
 user-selected data-folder import validates task data and verifies destination
