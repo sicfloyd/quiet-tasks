@@ -37,13 +37,15 @@ Most to-do apps are either full productivity suites or they do not behave like a
 
 ## Requirements
 
-- macOS with desktop widgets support.
-- Xcode installed.
-- Swift and WidgetKit support from the installed Xcode toolchain.
+- macOS 14+ with desktop widgets for personal installation/testing.
+- Xcode/Swift on the **GitHub-hosted build runner**, not on your Mac.
+- No paid Apple credentials or local Xcode are required to produce or inspect the
+  experimental ad-hoc artifact. Successful launch and widget behavior are not guaranteed.
 
-The app and widget require one correctly provisioned, signed App Group. There is
-no writable fallback path. Refresh tokens use macOS Keychain, never shared JSON.
-See [security review](SECURITY_REVIEW.md), [cloud build and migration instructions](Docs/SECURITY_AND_RELEASE.md),
+The app and widget use one App Group through macOS APIs, with no writable fallback.
+Refresh tokens use macOS Keychain, never shared JSON. Static ad-hoc signatures can
+carry the group declaration without proving authorization in the real app/widget.
+See [security review](SECURITY_REVIEW.md), [migration instructions](Docs/SECURITY_AND_RELEASE.md),
 and [actual validation results](Docs/VALIDATION.md).
 
 ## Personal testing with a free Apple Account
@@ -58,12 +60,19 @@ enabled. No Google account is connected by CI.
 
 ## Download
 
-Use this fork's **Actions → macOS test build → Artifacts** for the explicitly
-unsigned test-only ZIP containing the app and embedded WidgetKit extension. It is
-not a signed installation release. Do not bypass Gatekeeper to use it. A separate
-manual, protected release-candidate workflow supports your own Developer ID and
-notarization; signing, notarization, and signed widget behavior remain unverified
-until actually performed and recorded.
+Use this fork's **Actions → macOS test build → Artifacts**:
+
+- **Quiet-Tasks-ADHOC-PERSONAL-TEST**: app ZIP for a reviewed personal installation attempt.
+- **Quiet-Tasks-ADHOC-DIAGNOSTICS**: signed entitlements, checksums, and actual runtime results.
+- **Quiet-Tasks-UNSIGNED-TEST-ONLY**: reference build, not an installation release.
+
+[Follow the installation guide](Docs/PERSONAL_TESTING.md). CI verified the ad-hoc
+signatures and registered/listed the extension candidate, but direct extension
+execution is unsupported and Gatekeeper rejected the build. Desktop widget
+execution and shared reads remain unverified. Do not bypass protections to make
+it run. The separate paid Developer ID/notarization route is optional future work,
+not a prerequisite for this artifact; Apple-issued signing/notarization have not
+been performed. Nothing is automatically installed or released publicly.
 
 ## Google Tasks Sync
 

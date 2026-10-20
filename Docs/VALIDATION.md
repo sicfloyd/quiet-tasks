@@ -87,6 +87,31 @@ See [personal testing instructions](PERSONAL_TESTING.md) for the current free-ac
 path, per-app review options, and explicit stop conditions. No protection was removed
 to make runtime checks pass.
 
+### Registration diagnostics follow-up
+
+[Run 39460225376](https://github.com/sicfloyd/quiet-tasks/actions/runs/39460225376)
+for `f4bd0c3e10a1c2c19761e94ab8215f4a4fa143b6` also passed 32 tests, the build,
+static ad-hoc verification, and artifact uploads on **macOS 15.7.9 / arm64**.
+The app writer again exited 0; direct extension execution again exited -6 with
+`An XPC Service cannot be run directly.` Gatekeeper again rejected it (exit 3).
+PluginKit registration exited 0, a registry query listed exactly one candidate
+`com.personal.quiettasks.widget(1.0)`, and registration cleanup exited 0. This is
+registry evidence, **not WidgetKit launch, gallery visibility, shared reads, or
+timeline validation**. Finder launch and actual runtime sandbox enforcement were
+not tested by the direct-binary probe. Intel execution was not tested on this arm64
+runner, regardless of the universal binary's architecture slices.
+
+Produced artifacts:
+
+- **Quiet-Tasks-ADHOC-PERSONAL-TEST**: `12283006138`; service digest
+  `sha256:7d6b085feb62854c3a2d32d58ac03bd041cd7c0113d1c8830e73a5776511e42b`.
+- **Quiet-Tasks-ADHOC-DIAGNOSTICS**: `12282901229`; service digest
+  `sha256:3c3137eeb488e950dcd88181ebefc546843bd47092cb6a6e222a7e284c2872fa`.
+
+No account credentials, local Xcode installation, notarization, or Gatekeeper policy
+changes were needed for these attempts. Final documentation-only updates leave the
+application/build scripts unchanged; use PR checks to locate the newest run.
+
 ## Linux workspace checks
 
 - Verified the uploaded preliminary findings against source, project settings,
