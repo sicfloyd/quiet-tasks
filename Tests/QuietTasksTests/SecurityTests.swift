@@ -124,6 +124,25 @@ final class StorageTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         XCTAssertNil(try destination.read("tasks.json"))
     }
+    func testDisconnectFindsEveryReadableCredentialDespiteConflict() throws {
+        let vault = MemoryVault(); vault.token = "synthetic-a"
+        let url = try legacy("synthetic-b")
+        let store = MigratingTokenStore(vault: vault, legacyURLs: [url])
+        let candidates = store.revocationCandidates()
+        XCTAssertEqual(candidates.tokens, ["synthetic-a", "synthetic-b"])
+        XCTAssertTrue(candidates.complete)
+        try store.delete()
+        XCTAssertNil(vault.token)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+    func testCompletedMigrationNeverResurrectsLegacyCredential() throws {
+        let vault = MemoryVault()
+        let url = try legacy("stale-synthetic")
+        let store = MigratingTokenStore(vault: vault, legacyURLs: [url], migrationAllowed: false)
+        XCTAssertNil(try store.load())
+        XCTAssertNil(vault.token)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
     func testRealKeychainRoundTripUpdateAndDelete() throws {
         // Unique service; synthetic data only; cleans its own item even on failure.
         let vault = KeychainTokenVault(service: "QuietTasks.SecurityTests." + UUID().uuidString)

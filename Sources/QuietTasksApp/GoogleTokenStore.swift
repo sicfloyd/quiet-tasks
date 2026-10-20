@@ -59,9 +59,15 @@ struct KeychainTokenVault: TokenVault {
 struct MigratingTokenStore {
     let vault: any TokenVault
     let legacyURLs: [URL]
+    var migrationAllowed = true
     private struct LegacyToken: Decodable { let refreshToken: String }
 
     func load() throws -> String? {
+        if !migrationAllowed {
+            // A completed migration/disconnect must never resurrect a credential from a stale copy.
+            try cleanup()
+            return try vault.load()
+        }
         let stored = try vault.load()
         var legacy: [String] = []
         for url in legacyURLs {
@@ -90,6 +96,22 @@ struct MigratingTokenStore {
             do { try SafeFile.remove(url) } catch { failed = true }
         }
         if failed { throw StorageError.cleanupRequired }
+    }
+    func revocationCandidates() -> (tokens: Set<String>, complete: Bool) {
+        // Disconnect must still revoke readable credentials when migration/cleanup cannot finish.
+        var values = Set<String>()
+        var complete = true
+        do { if let token = try vault.load() { values.insert(token) } } catch { complete = false }
+        for url in legacyURLs {
+            do {
+                if let data = try SafeFile.read(url, maximumSize: 64 * 1024) {
+                    let value = try JSONDecoder().decode(LegacyToken.self, from: data)
+                    guard !value.refreshToken.isEmpty else { throw StorageError.invalidData }
+                    values.insert(value.refreshToken)
+                }
+            } catch { complete = false }
+        }
+        return (values, complete)
     }
     func delete() throws {
         // Attempt all cleanup even if one operation fails. Disconnect never migrates a token back.
@@ -121,7 +143,25 @@ enum GoogleTokenStore {
         MigratingTokenStore(vault: KeychainTokenVault(service: (Bundle.main.bundleIdentifier ?? "QuietTasks") + ".GoogleOAuth"),
                             legacyURLs: legacyURLs)
     }
-    static func saveRefreshToken(_ token: String) throws { try store.save(token) }
-    static func loadRefreshToken() throws -> String? { try store.load() }
-    static func deleteRefreshToken() throws { try store.delete() }
+    private static func markMigrationComplete() throws {
+        try SharedFiles.store().write(Data("1".utf8), name: "token-migration-complete")
+    }
+    static func saveRefreshToken(_ token: String) throws {
+        try store.save(token)
+        try markMigrationComplete()
+    }
+    static func loadRefreshToken() throws -> String? {
+        var current = store
+        current.migrationAllowed = try SharedFiles.store().read("token-migration-complete") == nil
+        let token = try current.load()
+        try markMigrationComplete()
+        return token
+    }
+    static func deleteRefreshToken() throws {
+        var failed = false
+        // Persist the tombstone even if deletion fails, so later launches cannot reimport old files.
+        do { try markMigrationComplete() } catch { failed = true }
+        do { try store.delete() } catch { failed = true }
+        if failed { throw StorageError.cleanupRequired }
+    }
 }

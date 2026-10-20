@@ -57,7 +57,7 @@ enum SafeFile {
 
 struct GroupFileStore {
     let directory: URL
-    static let allowedNames: Set<String> = ["tasks.json", "settings.json", "widget-state.json", "migration-complete", "group-probe.json"]
+    static let allowedNames: Set<String> = ["tasks.json", "settings.json", "widget-state.json", "migration-complete", "token-migration-complete", "group-probe.json"]
 
     func url(_ name: String) throws -> URL {
         guard Self.allowedNames.contains(name) else { throw StorageError.unsafeFile }

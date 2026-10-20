@@ -91,6 +91,20 @@ final class GoogleTasksTests: XCTestCase {
         XCTAssertEqual(restored.status, "needsAction")
         XCTAssertEqual(count, 2)
     }
+    func testRevocationUsesHTTPSPostAndRejectsFailure() async throws {
+        StubGoogleProtocol.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://oauth2.googleapis.com/revoke")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
+            return (200, "")
+        }
+        try await GoogleOAuthClient.revoke(token: "synthetic", session: session)
+        StubGoogleProtocol.handler = { _ in (503, "synthetic-secret") }
+        do {
+            try await GoogleOAuthClient.revoke(token: "synthetic", session: session)
+            XCTFail("Failed revocation must be reported")
+        } catch { XCTAssertFalse(error.localizedDescription.contains("synthetic-secret")) }
+    }
     func testMappingPreservesGoogleTaskAndSubtaskBoundaries() throws {
         let data = Data(#"{"items":[{"id":"parent","title":" Parent ","status":"needsAction"},{"id":"child","parent":"parent","title":"Child","status":"completed"}]}"#.utf8)
         let response = try JSONDecoder.googleDecoder.decode(GoogleTasksResponse.self, from: data)

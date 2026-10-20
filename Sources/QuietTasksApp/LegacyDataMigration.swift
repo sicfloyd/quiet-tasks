@@ -26,7 +26,12 @@ struct LegacyDataMigration {
             imports.append(("settings.json", try JSONEncoder.taskEncoder.encode(settings)))
         }
         if let data = try SafeFile.read(source.appendingPathComponent("widget-state.json")) {
-            _ = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            struct LegacyWidgetState: Decodable {
+                var pendingCompletionTaskID: String?
+                var taskPage: Int?
+            }
+            let state = try JSONDecoder().decode(LegacyWidgetState.self, from: data)
+            guard (state.taskPage ?? 0) >= 0 else { throw StorageError.invalidData }
             imports.append(("widget-state.json", data))
         }
         guard !imports.isEmpty else { throw StorageError.invalidData }

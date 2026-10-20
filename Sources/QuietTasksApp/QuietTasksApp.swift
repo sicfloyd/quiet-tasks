@@ -892,12 +892,12 @@ enum GoogleOAuthClient {
         return code
     }
 
-    static func revoke(token: String) async throws {
+    static func revoke(token: String, session: URLSession = GoogleHTTP.session) async throws {
         var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/revoke")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = formEncoded(["token": token])
-        let (_, response) = try await GoogleHTTP.session.data(for: request)
+        let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw GoogleSyncError.apiError("Google revocation failed. Revoke access in Google Account permissions.")
         }
@@ -1531,9 +1531,8 @@ final class TaskModel: ObservableObject {
         // Stop automatic sync first. Keep the credential only in memory while revoking.
         settings.googleSync.isConnected = false
         SettingsStore.save(settings)
-        var token: String?
-        var cleanupFailed = false
-        do { token = try GoogleTokenStore.loadRefreshToken() } catch { cleanupFailed = true }
+        let candidates = GoogleTokenStore.store.revocationCandidates()
+        var cleanupFailed = !candidates.complete
         do { try GoogleTokenStore.deleteRefreshToken() } catch { cleanupFailed = true }
         tasks.removeAll { $0.source == .google }
         googleTaskLists = []
@@ -1541,7 +1540,7 @@ final class TaskModel: ObservableObject {
         SettingsStore.save(settings)
         persist()
         var revocationFailed = false
-        if let token {
+        for token in candidates.tokens {
             do { try await GoogleOAuthClient.revoke(token: token) }
             catch { revocationFailed = true }
         }
