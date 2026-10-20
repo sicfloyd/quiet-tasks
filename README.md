@@ -41,23 +41,19 @@ Most to-do apps are either full productivity suites or they do not behave like a
 - Xcode installed.
 - Swift and WidgetKit support from the installed Xcode toolchain.
 
-The current local development build stores shared app/widget data at:
-
-```text
-/Users/Shared/QuietTasks/tasks.json
-```
-
-That lets an unsigned local app and WidgetKit extension share task data during development. A production-distributed version should move this to a signed App Group.
+The app and widget require one correctly provisioned, signed App Group. There is
+no writable fallback path. Refresh tokens use macOS Keychain, never shared JSON.
+See [security review](SECURITY_REVIEW.md), [cloud build and migration instructions](Docs/SECURITY_AND_RELEASE.md),
+and [actual validation results](Docs/VALIDATION.md).
 
 ## Download
 
-The latest downloadable build is available from GitHub Releases:
-
-```text
-https://github.com/rakeshutekar/quiet-tasks/releases
-```
-
-Current builds are unsigned development builds. If macOS blocks the app after download, open **System Settings -> Privacy & Security** and allow it, or build from source with Xcode.
+Use this fork's **Actions → macOS test build → Artifacts** for the explicitly
+unsigned test-only ZIP containing the app and embedded WidgetKit extension. It is
+not a signed installation release. Do not bypass Gatekeeper to use it. A separate
+manual, protected release-candidate workflow supports your own Developer ID and
+notarization; signing, notarization, and signed widget behavior remain unverified
+until actually performed and recorded.
 
 ## Google Tasks Sync
 
@@ -65,11 +61,12 @@ Quiet Tasks can import tasks from one Google Tasks list and show them in the app
 
 To use it in the app:
 
-1. Open **Quiet Tasks -> Settings -> Google Tasks**.
-2. Click **Connect Google**.
-3. Choose a Google account, choose a task list, then click **Sync Now**.
+1. Supply your own Google Cloud Desktop OAuth client ID in **Settings → Google Tasks → Advanced**.
+2. Optionally select read-only mode before connecting. Default mode permits completion/restore.
+3. Click **Connect Google** and explicitly approve access; choose a task list, then click **Sync Now**.
+4. Disconnect before changing client ID or scope. Disconnect attempts revocation and local credential cleanup; review any reported failures.
 
-For forks or local builds that use their own Google Cloud project:
+This fork requires your own Google Cloud project:
 
 1. In Google Cloud, open **APIs & Services -> Library** and enable **Google Tasks API**.
 2. Open **APIs & Services -> OAuth consent screen** and configure the app. If the publishing status is **Testing**, add your Google account as a test user.
@@ -88,75 +85,30 @@ If you connected before completion sync was added, disconnect and reconnect Goog
 
 Google Tasks due dates are date-only. If a Google task has a due date, Quiet Tasks shows the date without an exact time.
 
-## Install From Source
+## Cloud development and builds
 
-Clone the repo:
+Keep development in the cloud checkout and use GitHub-hosted macOS runners for
+native builds. The normal workflow runs `swift test --jobs 2` and `xcodebuild`,
+checks for the embedded widget, and uploads a test ZIP. No Google login or Apple
+signing credentials are needed. See [detailed instructions](Docs/SECURITY_AND_RELEASE.md)
+for artifacts, one-time legacy migration, configurable signing IDs, and the
+approval-gated manual release candidate.
 
-```bash
-git clone https://github.com/rakeshutekar/quiet-tasks.git
-cd quiet-tasks
-```
-
-Build the release app:
-
-```bash
-xcodebuild \
-  -project QuietTasks.xcodeproj \
-  -scheme "Quiet Tasks" \
-  -configuration Release \
-  -derivedDataPath XcodeDerivedData \
-  -destination 'generic/platform=macOS' \
-  build
-```
-
-Install it into Applications:
+On a macOS runner, the unsigned compilation check is:
 
 ```bash
-cp -R "XcodeDerivedData/Build/Products/Release/Quiet Tasks.app" /Applications/
+swift test --jobs 2
+xcodebuild -project QuietTasks.xcodeproj -scheme "Quiet Tasks" \
+  -configuration Release -derivedDataPath XcodeDerivedData \
+  -destination 'generic/platform=macOS' -jobs 2 \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
 ```
 
-Open the app once:
-
-```bash
-open -a "/Applications/Quiet Tasks.app"
-```
-
-Then add the widget:
-
-1. Right-click the desktop.
-2. Choose **Edit Widgets**.
-3. Search for **Quiet Tasks**.
-4. Drag the widget size you want onto the desktop.
-5. Click **Done**.
-
-If macOS blocks the app because it was built or downloaded outside the App Store, open **System Settings -> Privacy & Security** and allow it, or build it locally from Xcode.
-
-## Development
-
-Open the project in Xcode:
-
-```bash
-open QuietTasks.xcodeproj
-```
-
-Main files:
-
-- `Sources/QuietTasksApp/QuietTasksApp.swift` - the macOS app.
-- `Sources/QuietTasksWidget/QuietTasksWidget.swift` - the WidgetKit widget.
-- `Sources/QuietTasksWidget/WidgetBundle.swift` - widget bundle entry point.
-- `Scripts/make-icon.swift` - local icon generation helper.
-
-Build from the command line:
-
-```bash
-xcodebuild \
-  -project QuietTasks.xcodeproj \
-  -scheme "Quiet Tasks" \
-  -configuration Release \
-  -derivedDataPath XcodeDerivedData \
-  -destination 'generic/platform=macOS' \
-  build
-```
+This does not validate App Group access, signed app Keychain authorization,
+WidgetKit registration, or Google account behavior. Never install or deploy
+artifacts automatically. The signed release workflow requires your own team,
+app/widget bundle IDs, App Group, separate matching profiles, protected secrets,
+and explicit review. A remote macOS desktop acceptance test is still required.
 
 ## Contributing
 

@@ -1,0 +1,102 @@
+name: Manual signed release candidate
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_commit:
+        description: Full reviewed commit SHA (must match selected workflow ref)
+        required: true
+      team_id:
+        description: Your Apple Developer Team ID
+        required: true
+      app_bundle_id:
+        description: Your app bundle identifier
+        required: true
+      widget_bundle_id:
+        description: Your widget bundle identifier (app ID plus a suffix)
+        required: true
+      app_group_id:
+        description: Your provisioned App Group identifier
+        required: true
+permissions:
+  contents: read
+jobs:
+  release-candidate:
+    # Configure required reviewers and allowed refs BEFORE storing signing secrets here.
+    environment: release-signing
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      REVIEWED_SHA: ${{ inputs.reviewed_commit }}
+      TEAM_ID: ${{ inputs.team_id }}
+      APP_ID: ${{ inputs.app_bundle_id }}
+      WIDGET_ID: ${{ inputs.widget_bundle_id }}
+      GROUP_ID: ${{ inputs.app_group_id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Require explicit reviewed commit and configured protection
+        env:
+          APPROVAL_CONFIGURED: ${{ vars.RELEASE_APPROVAL_CONFIGURED }}
+        run: |
+          set -euo pipefail
+          test "$APPROVAL_CONFIGURED" = true
+          test "$REVIEWED_SHA" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import os, re
+          for key in ('TEAM_ID', 'APP_ID', 'WIDGET_ID', 'GROUP_ID'):
+              assert re.fullmatch(r'[A-Za-z0-9.-]+', os.environ[key]), f'Invalid {key}'
+          assert os.environ['WIDGET_ID'].startswith(os.environ['APP_ID'] + '.')
+          assert 'example' not in os.environ['APP_ID']
+          PY
+      - name: Test before signing
+        run: swift test --jobs 2
+      - name: Import signing material into temporary keychain and validate profiles
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          APP_PROFILE_BASE64: ${{ secrets.APP_PROFILE_BASE64 }}
+          WIDGET_PROFILE_BASE64: ${{ secrets.WIDGET_PROFILE_BASE64 }}
+        run: bash Scripts/prepare-release-signing.sh
+      - name: Build, sign, and verify candidate
+        env:
+          SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_IDENTITY }}
+        run: bash Scripts/build-signed-release.sh
+      - name: Notarize and staple (no GitHub Release or deployment)
+        env:
+          NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
+          xcrun notarytool submit dist/Quiet-Tasks-signed.zip \
+            --key "$RUNNER_TEMP/notary-key.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+            --wait --output-format json > "$RUNNER_TEMP/notary-result.json"
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP'] + '/notary-result.json') as f:
+              assert json.load(f)['status'] == 'Accepted', 'Notarization was not accepted'
+          PY
+          app='XcodeDerivedData/Build/Products/Release/Quiet Tasks.app'
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" dist/Quiet-Tasks-signed-notarized.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Quiet-Tasks-signed-notarized-REVIEW-REQUIRED
+          path: dist/Quiet-Tasks-signed-notarized.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove temporary credentials
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/quiet-release.keychain-db"; then
+            security delete-keychain "$RUNNER_TEMP/quiet-release.keychain-db"
+          fi
+          rm -f "$RUNNER_TEMP/quiet-certificate.p12" "$RUNNER_TEMP/notary-key.p8" \
+            "$RUNNER_TEMP/app-profile.provisionprofile" "$RUNNER_TEMP/widget-profile.provisionprofile" \
+            "$RUNNER_TEMP/app-profile.plist" "$RUNNER_TEMP/widget-profile.plist" \
+            "$RUNNER_TEMP/signing-settings.xcconfig"
